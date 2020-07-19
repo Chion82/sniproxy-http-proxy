@@ -42,6 +42,9 @@ struct Listener {
     int log_bad_requests, reuseport, transparent_proxy, ipv6_v6only;
     int fallback_use_proxy_header;
 
+    int fallback_use_http_proxy;
+    struct Address *fallback_proxy_target_address;
+
     /* Runtime fields */
     int reference_count;
     struct ev_io watcher;

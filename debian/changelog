@@ -1,3 +1,9 @@
+sniproxy (0.6.0) UNRELEASED; urgency=medium
+
+  * New git revision
+
+ -- Chion Deng <chion@chion-desktop-ubuntu>  Sun, 19 Jul 2020 20:06:27 +0800
+
 sniproxy (0.6.0) unstable; urgency=medium
 
   * PROXY v1 protocol support

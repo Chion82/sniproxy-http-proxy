@@ -38,6 +38,9 @@ struct Backend {
     struct Address *address;
     int use_proxy_header;
 
+    int use_http_proxy;
+    struct Address *proxy_target_address;
+
     /* Runtime fields */
     pcre *pattern_re;
     STAILQ_ENTRY(Backend) entries;

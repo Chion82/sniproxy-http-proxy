@@ -59,6 +59,16 @@ struct Connection {
     ev_tstamp established_timestamp;
     int use_proxy_header;
 
+    struct {
+        int ready;
+        char *response_header;
+        int response_header_len;
+        struct Buffer *header_buffer;
+    } http_proxy;
+    int use_http_proxy;
+
+    struct Address *proxy_target_address;
+
     TAILQ_ENTRY(Connection) entries;
 };
 

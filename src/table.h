@@ -49,6 +49,8 @@ struct LookupResult {
     const struct Address *address;
     int caller_free_address;
     int use_proxy_header;
+    int use_http_proxy;
+    struct Address *proxy_target_address;
 };
 
 struct Table *new_table();

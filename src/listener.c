@@ -363,6 +363,13 @@ accept_listener_fallback_address(struct Listener *listener, const char *fallback
             listener->fallback_use_proxy_header == 0) {
         listener->fallback_use_proxy_header = 1;
         return 1;
+    } else if (listener->fallback_use_http_proxy == 0 &&
+               strcasestr(fallback, "http_proxy") == fallback) {
+        listener->fallback_use_http_proxy = 1;
+        if (strlen(fallback) > strlen("http_proxy:")) {
+            const char *proxy_target = fallback + strlen("http_proxy:");
+            listener->fallback_proxy_target_address = new_address(proxy_target);
+        }
     } else {
         err("Unexpected fallback argument: %s", fallback);
         return 0;
@@ -627,7 +634,9 @@ listener_lookup_server_address(const struct Listener *listener,
         /* No match in table, use fallback address if present */
         return (struct LookupResult){
             .address = listener->fallback_address,
-            .use_proxy_header = listener->fallback_use_proxy_header
+            .use_proxy_header = listener->fallback_use_proxy_header,
+            .use_http_proxy = listener->fallback_use_http_proxy,
+            .proxy_target_address = listener->fallback_proxy_target_address,
         };
     } else if (address_is_wildcard(table_result.address)) {
         /* Wildcard table entry, create a new address from hostname */
@@ -638,7 +647,9 @@ listener_lookup_server_address(const struct Listener *listener,
 
             return (struct LookupResult){
                 .address = listener->fallback_address,
-                .use_proxy_header = listener->fallback_use_proxy_header
+                .use_proxy_header = listener->fallback_use_proxy_header,
+                .use_http_proxy = listener->fallback_use_http_proxy,
+                .proxy_target_address = listener->fallback_proxy_target_address,
             };
         } else if (address_is_sockaddr(new_addr)) {
             warn("Refusing to proxy to socket address literal %.*s in request",
@@ -647,7 +658,9 @@ listener_lookup_server_address(const struct Listener *listener,
 
             return (struct LookupResult){
                 .address = listener->fallback_address,
-                .use_proxy_header = listener->fallback_use_proxy_header
+                .use_proxy_header = listener->fallback_use_proxy_header,
+                .use_http_proxy = listener->fallback_use_http_proxy,
+                .proxy_target_address = listener->fallback_proxy_target_address,
             };
         }
 
@@ -661,7 +674,9 @@ listener_lookup_server_address(const struct Listener *listener,
         return (struct LookupResult){
             .address = new_addr,
             .caller_free_address = 1,
-            .use_proxy_header = table_result.use_proxy_header
+            .use_proxy_header = table_result.use_proxy_header,
+            .use_http_proxy = table_result.use_http_proxy,
+            .proxy_target_address = table_result.proxy_target_address,
         };
     } else if (address_port(table_result.address) == 0) {
         /* If the server port isn't specified return a new address using the
@@ -673,7 +688,9 @@ listener_lookup_server_address(const struct Listener *listener,
         return (struct LookupResult){
             .address = new_addr,
             .caller_free_address = 1,
-            .use_proxy_header = table_result.use_proxy_header
+            .use_proxy_header = table_result.use_proxy_header,
+            .use_http_proxy = table_result.use_http_proxy,
+            .proxy_target_address = table_result.proxy_target_address,
         };
     } else {
         return table_result;

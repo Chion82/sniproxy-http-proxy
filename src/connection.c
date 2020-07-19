@@ -227,6 +227,28 @@ server_socket_open(const struct Connection *con) {
         con->state == CLIENT_CLOSED;
 }
 
+static struct Buffer*
+parse_http_proxy_response_header(struct Connection *con, struct Buffer *input_buffer) {
+    /* Don't send any client data before proxy is ready */
+    struct Buffer *output_buffer = con->http_proxy.header_buffer;
+    if(buffer_len(input_buffer) > 0) {
+        /* Check if we've received complete response headers */
+        con->http_proxy.response_header = realloc(con->http_proxy.response_header, buffer_len(input_buffer));
+        memset(con->http_proxy.response_header, 0, buffer_len(input_buffer));
+        buffer_peek(input_buffer, con->http_proxy.response_header, buffer_len(input_buffer));
+        char *header_end_flag = strstr(con->http_proxy.response_header, "\r\n\r\n");
+        if (header_end_flag != NULL) {
+            /* Response headers are ready. Consume the response headers ONLY. Do not bother with the payload. */
+            char *header_end = header_end_flag + 4;
+            con->header_len = header_end - con->http_proxy.response_header;
+            buffer_pop(input_buffer, NULL, con->header_len);
+            con->http_proxy.ready = 1;
+            output_buffer = con->client.buffer;
+        }
+    }
+    return output_buffer;
+}
+
 /*
  * Main client callback: this is used by both the client and server watchers
  *
@@ -265,6 +287,15 @@ connection_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
         }
     }
 
+    if (con->use_http_proxy && !con->http_proxy.ready) {
+        if (is_client) {
+            /* Don't consume backend data if proxy is not ready */
+            goto skip_transmission;
+        } else {
+            output_buffer = parse_http_proxy_response_header(con, input_buffer);
+        }
+    }
+
     /* Transmit */
     if (revents & EV_WRITE && buffer_len(output_buffer)) {
         ssize_t bytes_transmitted = buffer_send(output_buffer, w->fd, 0, loop);
@@ -276,6 +307,8 @@ connection_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
             close_socket(con, loop);
         }
     }
+
+skip_transmission:
 
     /* Handle any state specific logic */
     if (is_client && con->state == ACCEPTED)
@@ -520,6 +553,9 @@ resolve_server_address(struct Connection *con, struct ev_loop *loop) {
         cb_data->loop = loop;
         con->use_proxy_header = result.use_proxy_header;
 
+        con->use_http_proxy = result.use_http_proxy;
+        con->proxy_target_address = result.proxy_target_address;
+
         int resolv_mode = RESOLV_MODE_DEFAULT;
         if (con->listener->transparent_proxy) {
             char listener_address[ADDRESS_BUFFER_SIZE];
@@ -553,6 +589,9 @@ resolve_server_address(struct Connection *con, struct ev_loop *loop) {
         memcpy(&con->server.addr, address_sa(result.address),
             con->server.addr_len);
         con->use_proxy_header = result.use_proxy_header;
+
+        con->use_http_proxy = result.use_http_proxy;
+        con->proxy_target_address = result.proxy_target_address;
 
         if (result.caller_free_address)
             free((void *)result.address);
@@ -603,6 +642,38 @@ free_resolv_cb_data(struct resolv_cb_data *cb_data) {
     if (cb_data->cb_free_addr)
         free((void *)cb_data->address);
     free(cb_data);
+}
+
+static void
+send_http_proxy_header(struct Connection *con, struct ev_loop *loop) {
+    char backend_port [10];
+
+    con->http_proxy.header_buffer = new_buffer(4096, loop);
+
+    buffer_push(con->http_proxy.header_buffer, "CONNECT ", 8);
+    if (con->proxy_target_address) {
+        /* Proxy target is specified */
+        char target_address_str[1024];
+        display_address(con->proxy_target_address, target_address_str, sizeof(target_address_str) - 5);
+        if (strrchr(target_address_str, ':') == NULL) {
+            snprintf(target_address_str + strlen(target_address_str), 5, ":443");
+        }
+        buffer_push(con->http_proxy.header_buffer, target_address_str, strlen(target_address_str));
+        debug("proxy target: %s", target_address_str);
+    } else {
+        /* In case proxy target is unspecified, use "SNI + listening port" as the target  */
+        buffer_push(con->http_proxy.header_buffer, con->hostname, con->hostname_len);
+        snprintf(backend_port, sizeof(backend_port), "%u", address_port(con->listener->address));
+        buffer_push(con->http_proxy.header_buffer, ":", 1);
+        buffer_push(con->http_proxy.header_buffer, backend_port, strlen(backend_port));
+        debug("proxy target unspecified. Using %s:%u", con->hostname, address_port(con->listener->address));
+    }
+    buffer_push(con->http_proxy.header_buffer, " HTTP/1.1\r\n", 11);
+    const char *user_agent_header = "User-Agent: sniproxy/0.6.0\r\n";
+    const char *proxy_connection_header = "Proxy-Connection: Keep-Alive\r\n";
+    buffer_push(con->http_proxy.header_buffer, user_agent_header, strlen(user_agent_header));
+    buffer_push(con->http_proxy.header_buffer, proxy_connection_header, strlen(proxy_connection_header));
+    buffer_push(con->http_proxy.header_buffer, "\r\n", 2);
 }
 
 static void
@@ -705,6 +776,13 @@ initiate_server_connect(struct Connection *con, struct ev_loop *loop) {
         /* If we prepended the PROXY header and this backend isn't configured
          * to receive it, consume it now */
         buffer_pop(con->client.buffer, NULL, con->header_len);
+    }
+
+    /* Send HTTP Proxy headers
+     * before forwarding data from client side
+     */
+    if (con->use_http_proxy) {
+        send_http_proxy_header(con, loop);
     }
 
     struct ev_io *server_watcher = &con->server.watcher;
@@ -897,6 +975,14 @@ free_connection(struct Connection *con) {
     free_buffer(con->client.buffer);
     free_buffer(con->server.buffer);
     free((void *)con->hostname); /* cast away const'ness */
+
+    if (con->http_proxy.response_header) {
+        free(con->http_proxy.response_header);
+    }
+    if (con->http_proxy.header_buffer) {
+        free_buffer(con->http_proxy.header_buffer);
+    }
+
     free(con);
 }
 
