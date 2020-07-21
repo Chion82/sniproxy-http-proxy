@@ -81,10 +81,10 @@ accept_backend_arg(struct Backend *backend, const char *arg) {
         strcasecmp(arg, "proxy_protocol") == 0) {
         backend->use_proxy_header = 1;
     } else if (backend->use_http_proxy == 0 &&
-        strcasestr(arg, "http_proxy") == arg) {
+        strcasestr(arg, "http_proxy_to") == arg) {
         backend->use_http_proxy = 1;
-        if (strlen(arg) > strlen("http_proxy:")) {
-            const char *proxy_target = arg + strlen("http_proxy:");
+        if (strlen(arg) > strlen("http_proxy_to:")) {
+            const char *proxy_target = arg + strlen("http_proxy_to:");
             backend->proxy_target_address = new_address(proxy_target);
         }
     } else {

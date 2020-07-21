@@ -651,22 +651,26 @@ send_http_proxy_header(struct Connection *con, struct ev_loop *loop) {
     con->http_proxy.header_buffer = new_buffer(4096, loop);
 
     buffer_push(con->http_proxy.header_buffer, "CONNECT ", 8);
-    if (con->proxy_target_address) {
+    if (con->proxy_target_address && !address_is_wildcard(con->proxy_target_address)) {
         /* Proxy target is specified */
         char target_address_str[1024];
-        display_address(con->proxy_target_address, target_address_str, sizeof(target_address_str) - 5);
+        display_address(con->proxy_target_address, target_address_str, sizeof(target_address_str) - 7);
         if (strrchr(target_address_str, ':') == NULL) {
-            snprintf(target_address_str + strlen(target_address_str), 5, ":443");
+            snprintf(target_address_str + strlen(target_address_str), 7, ":%u", address_port(con->listener->address));
         }
         buffer_push(con->http_proxy.header_buffer, target_address_str, strlen(target_address_str));
         debug("proxy target: %s", target_address_str);
     } else {
         /* In case proxy target is unspecified, use "SNI + listening port" as the target  */
         buffer_push(con->http_proxy.header_buffer, con->hostname, con->hostname_len);
-        snprintf(backend_port, sizeof(backend_port), "%u", address_port(con->listener->address));
+        if (con->proxy_target_address && address_port(con->proxy_target_address)) {
+            snprintf(backend_port, sizeof(backend_port), "%u", address_port(con->proxy_target_address));
+        } else {
+            snprintf(backend_port, sizeof(backend_port), "%u", address_port(con->listener->address));
+        }
         buffer_push(con->http_proxy.header_buffer, ":", 1);
         buffer_push(con->http_proxy.header_buffer, backend_port, strlen(backend_port));
-        debug("proxy target unspecified. Using %s:%u", con->hostname, address_port(con->listener->address));
+        debug("proxy target is wildcard. Using %s:%s", con->hostname, backend_port);
     }
     buffer_push(con->http_proxy.header_buffer, " HTTP/1.1\r\n", 11);
     const char *user_agent_header = "User-Agent: sniproxy/0.6.0\r\n";
